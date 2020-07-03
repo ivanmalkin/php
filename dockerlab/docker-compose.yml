@@ -1,0 +1,88 @@
+version: '3'
+
+volumes:
+  mysql:
+    driver: local
+  caddy:
+    driver: local
+  docker-in-docker:
+    driver: local
+    
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    
+services:
+  mysql:
+      build:
+        context: ./mysql
+        args:
+          - MYSQL_VERSION=latest
+      environment:
+        - MYSQL_DATABASE=default
+        - MYSQL_USER=default
+        - MYSQL_PASSWORD=secret
+        - MYSQL_ROOT_PASSWORD=root
+      volumes:
+        - ~/.dockerlab/data/mysql:/var/lib/mysql
+      ports:
+        - "3306:3306"
+      networks:
+        - backend
+  docker-in-docker:
+      image: docker:19.03-dind
+      environment:
+        DOCKER_TLS_SAN: DNS:docker-in-docker      
+      privileged: true
+      volumes:
+        - ..:/var/www
+        - docker-in-docker:/certs/client
+      expose:
+        - 2375
+      networks:
+        - backend
+  caddy:
+    build: ./caddy
+    volumes:
+      - ..:/var/www:cached
+      - ./caddy/caddy:/etc/caddy
+      - ./logs/caddy:/var/log/caddy
+      - ~/.dockerlab/data:/root/.caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - php-fpm
+    networks:
+      - frontend
+      - backend
+  redis:
+    build: ./redis
+    volumes:
+      - ~/.dockerlab/data/redis:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+  php-fpm:
+      build:
+        context: ./php-fpm
+      volumes:
+          - ./php-fpm/php7.3.ini:/usr/local/etc/php/php.ini
+          - ..:/var/www:cached
+          - docker-in-docker:/certs/client
+      environment:
+        - DOCKER_HOST=tcp://docker-in-docker:2376
+        - DOCKER_TLS_VERIFY=1
+        - DOCKER_TLS_CERTDIR=/certs
+        - DOCKER_CERT_PATH=/certs/client
+      expose:
+        - "9000"
+      extra_hosts:
+        - "dockerhost:10.0.75.1"
+      networks:
+        - backend
+      links:
+        - docker-in-docker
